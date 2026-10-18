@@ -137,4 +137,4 @@ Guarda el siguiente contenido en un archivo llamado `cft`:
 ## 📄 Licencia
 
 Uso libre. Modifícalo a tu gusto.
-```
+
