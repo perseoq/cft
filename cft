@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+
+PID_FILE="/tmp/cft-cloudflared.pid"
+LOG_FILE="/tmp/cft-cloudflared.log"
+
+# --- Funciones ---
+usage() {
+    echo "Uso:"
+    echo "  cft up NOMBRE_VARIABLE   Inicia el túnel usando el token de la variable de entorno"
+    echo "  cft down                 Detiene el túnel en ejecución"
+    echo "  cft status               Muestra el estado actual"
+    echo ""
+    echo "Ejemplo:"
+    echo "  cft up CLOUDFLARE_TOKEN_MI_TUNEL"
+    exit 1
+}
+
+start_tunnel() {
+    local var_name="$1"
+
+    if [ -z "$var_name" ]; then
+        echo "Error: debes indicar el nombre de la variable de entorno."
+        usage
+    fi
+
+    # Verificar si ya hay un túnel corriendo
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "Ya hay un túnel en ejecución (PID: $(cat "$PID_FILE"))."
+        echo "Usa 'cft down' antes de iniciar otro."
+        exit 1
+    fi
+
+    # Obtener el valor de la variable de forma indirecta (bash)
+    local token="${!var_name}"
+
+    if [ -z "$token" ]; then
+        echo "Error: la variable '$var_name' no existe o está vacía."
+        echo "Asegúrate de tenerla definida en tu .bashrc, por ejemplo:"
+        echo "  export $var_name=\"eyJ...tu_token...\""
+        exit 1
+    fi
+
+    echo "Iniciando túnel con token de \$$var_name ..."
+    nohup cloudflared tunnel run --token "$token" > "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+
+    sleep 2
+    if kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "✅ Túnel iniciado (PID: $(cat "$PID_FILE"))."
+        echo "   Logs: $LOG_FILE"
+    else
+        echo "❌ El túnel no pudo iniciarse. Revisa $LOG_FILE"
+        rm -f "$PID_FILE"
+        exit 1
+    fi
+}
+
+stop_tunnel() {
+    if [ ! -f "$PID_FILE" ]; then
+        echo "No hay ningún túnel registrado como activo."
+        return 0
+    fi
+
+    local pid
+    pid=$(cat "$PID_FILE")
+
+    if kill -0 "$pid" 2>/dev/null; then
+        echo "Deteniendo túnel (PID: $pid)..."
+        kill "$pid"
+        # Espera hasta 10s a que termine
+        for _ in {1..20}; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.5
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "⚠️  El proceso no terminó, forzando..."
+            kill -9 "$pid"
+        fi
+        echo "✅ Túnel detenido."
+    else
+        echo "El proceso (PID: $pid) ya no estaba activo."
+    fi
+
+    rm -f "$PID_FILE"
+}
+
+status_tunnel() {
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "Estado: 🟢 Corriendo (PID: $(cat "$PID_FILE"))"
+        echo "Logs:   $LOG_FILE"
+    else
+        echo "Estado: 🔴 Detenido"
+    fi
+}
+
+# --- Main ---
+case "$1" in
+    up)     start_tunnel "$2" ;;
+    down)   stop_tunnel ;;
+    status) status_tunnel ;;
+    *)      usage ;;
+esac
